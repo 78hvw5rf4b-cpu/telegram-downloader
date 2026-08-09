@@ -29,17 +29,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def download_video_file(url: str, output_pattern: str):
     ydl_opts = {
-        # صيغة خفيفة ومباشرة تدمج الفيديو مع الصوت تلقائياً
-        'format': 'b[ext=mp4]/best[ext=mp4]/best',
+        # صيغة تعمل بكفاءة مع X (Twitter) واليوتيوب Shorts وتيك توك وانستجرام
+        'format': 'best[ext=mp4]/best',
         'outtmpl': output_pattern,
         'quiet': True,
         'no_warnings': True,
-        # إضافة خيارات لمنع حظر خوادم Render
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
@@ -59,11 +53,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         files = glob.glob(f"video_{chat_id}_*")
         if not files:
-            await status_msg.edit_text("❌ تعذر تحميل الفيديو. تأكد من صحة الرابط.")
+            await status_msg.edit_text("❌ تعذر تحميل الفيديو. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.")
             return
 
         video_path = files[0]
         
+        # التأكد من حجم الملف (حد تليجرام المباشر 50MB)
         file_size = os.path.getsize(video_path) / (1024 * 1024)
         if file_size > 50:
             await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).")
@@ -80,7 +75,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except Exception as e:
         logging.error(f"Error: {e}")
-        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل. تأكد من أن المقطع ليس حظراً خاصاً أو جرب رابطاً آخر.")
+        await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الفيديو.")
         for f in glob.glob(f"video_{chat_id}_*"):
             try:
                 os.remove(f)
