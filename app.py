@@ -29,8 +29,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def download_video_file(url: str, output_pattern: str):
     ydl_opts = {
-        # إعدادات متوافقة مع تيك توك، يوتيوب، وانستجرام
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        # صيغة تعمل بكفاءة مع X (Twitter) واليوتيوب Shorts وتيك توك وانستجرام
+        'format': 'best[ext=mp4]/best',
         'outtmpl': output_pattern,
         'quiet': True,
         'no_warnings': True,
@@ -57,6 +57,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         video_path = files[0]
+        
+        # التأكد من حجم الملف (حد تليجرام المباشر 50MB)
+        file_size = os.path.getsize(video_path) / (1024 * 1024)
+        if file_size > 50:
+            await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).")
+            os.remove(video_path)
+            return
+
         await status_msg.edit_text("⬆️ جاري إرسال الفيديو...")
 
         with open(video_path, 'rb') as video:
