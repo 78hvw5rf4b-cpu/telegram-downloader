@@ -4,8 +4,8 @@ import asyncio
 import threading
 import glob
 import json
+import requests
 from flask import Flask
-import yt_dlp
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -25,8 +25,8 @@ threading.Thread(target=run_web, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- نظام حفظ وحساب عدد المستخدمين ---
-USERS_FILE = "users.json"
+# --- نظام حفظ وإحصاء المستخدمين ---
+USERS_FILE = "users_data.json"
 
 def load_users():
     if os.path.exists(USERS_FILE):
@@ -51,85 +51,91 @@ def register_user(user_id):
         users_list.add(user_id)
         save_users(users_list)
 
-# --- الأوامر والخدمات ---
+# --- الأوامر الأساسية ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(user_id)
-    await update.message.reply_text("أهلاً معك بوت Abu na9r ارسل رابط المقطع")
+    await update.message.reply_text("أهلاً معك بوت Abu na9r، أرسل رابط المقطع للتحميل.")
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # عرض إحصائية عدد المشتركين في البوت
+    user_id = update.effective_user.id
+    register_user(user_id)
     total_users = len(users_list)
     await update.message.reply_text(f"📊 **إحصائيات البوت:**\n\nعدد الأشخاص الذين استخدموا البوت: {total_users}")
 
-def download_video_file(url: str, output_pattern: str):
-    ydl_opts = {
-        # صيغة خفيفة تدعم Shorts وتويتر والتيك توك
-        'format': 'b[ext=mp4]/best[ext=mp4]/best',
-        'outtmpl': output_pattern,
-        'quiet': True,
-        'no_warnings': True,
-        # خيارات لتجاوز قيود الخوادم والحظر
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+# --- آلية التحميل المباشرة التلقائية ---
+
+def download_file(url: str, dest_path: str):
+    response = requests.get(url, stream=True, timeout=30)
+    response.raise_for_status()
+    with open(dest_path, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    register_user(user_id)  # تسجيل المستخدم عند إرسال أي رابط
-    
+    register_user(user_id)
+
     text = update.message.text.strip()
     if not (text.startswith("http://") or text.startswith("https://")):
         await update.message.reply_text("الرجاء إرسال رابط فيديو صحيح.")
         return
 
-    status_msg = await update.message.reply_text("⏳ جاري تحميل الفيديو، انتظر قليلاً...")
+    status_msg = await update.message.reply_text("⏳ جاري جلب وتحميل المقطع، انتظر قليلاً...")
     chat_id = update.message.chat_id
-    output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
+    output_file = f"video_{chat_id}.mp4"
 
     try:
-        await asyncio.to_thread(download_video_file, text, output_pattern)
+        # استخدام Cobalt API المفتوح لتجاوز حظر يوتيوب/X السحابي
+        api_url = "https://api.cobalt.tools/api/json"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "url": text,
+            "vQuality": "720"
+        }
 
-        files = glob.glob(f"video_{chat_id}_*")
-        if not files:
-            await status_msg.edit_text("❌ تعذر تحميل الفيديو. تأكد من صحة الرابط.")
+        res = await asyncio.to_thread(requests.post, api_url, json=payload, headers=headers, timeout=15)
+        data = res.json()
+
+        if "url" not in data:
+            await status_msg.edit_text("❌ تعذر تحميل هذا الرابط. تأكد أن المقطع ليس من حساب خاص.")
             return
 
-        video_path = files[0]
-        
-        file_size = os.path.getsize(video_path) / (1024 * 1024)
+        video_download_url = data["url"]
+
+        await asyncio.to_thread(download_file, video_download_url, output_file)
+
+        file_size = os.path.getsize(output_file) / (1024 * 1024)
         if file_size > 50:
             await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).")
-            os.remove(video_path)
+            os.remove(output_file)
             return
 
         await status_msg.edit_text("⬆️ جاري إرسال الفيديو...")
 
-        with open(video_path, 'rb') as video:
+        with open(output_file, 'rb') as video:
             await update.message.reply_video(video=video)
 
-        os.remove(video_path)
+        os.remove(output_file)
         await status_msg.delete()
 
     except Exception as e:
-        logging.error(f"Error: {e}")
-        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل.")
-        for f in glob.glob(f"video_{chat_id}_*"):
+        logging.error(f"Error handling video: {e}")
+        await status_msg.edit_text("❌ حدث خطأ أثناء جلب الفيديو. جرب رابطاً آخر.")
+        if os.path.exists(output_file):
             try:
-                os.remove(f)
+                os.remove(output_file)
             except Exception:
                 pass
 
 def main():
     token = os.environ.get("BOT_TOKEN")
     if not token:
-        print("خطأ: لم يتم العثور على BOT_TOKEN في متغيرات البيئة!")
+        print("خطأ: لم يتم العثور على BOT_TOKEN!")
         return
 
     application = Application.builder().token(token).build()
