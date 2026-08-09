@@ -4,6 +4,8 @@ import asyncio
 import threading
 import json
 import glob
+import re
+import requests
 from flask import Flask
 import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -82,7 +84,27 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         total_users = len(users_list)
         await query.message.reply_text(f"📊 **إحصائيات البوت:**\n\nعدد الأشخاص الذين استخدموا البوت: {total_users}", reply_markup=get_main_keyboard())
 
-# --- دالة التحميل المباشر باستخدام yt-dlp المطور ---
+# --- محرك خاص ومباشر لمقاطع TikTok لتجاوز الحظر ---
+
+def download_tiktok_direct(url: str, output_path: str) -> bool:
+    try:
+        api_url = f"https://api.tiklydown.eu.org/api/download?url={url}"
+        res = requests.get(api_url, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            video_url = data.get("video", {}).get("noWatermark") or data.get("video", {}).get("watermark")
+            if video_url:
+                v_res = requests.get(video_url, stream=True, timeout=30)
+                if v_res.status_code == 200:
+                    with open(output_path, 'wb') as f:
+                        for chunk in v_res.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    return True
+    except Exception as e:
+        logging.error(f"TikTok Direct API error: {e}")
+    return False
+
+# --- دالة التحميل العامة للمناصات الأخرى (Shorts / X) ---
 
 def download_video_file(url: str, output_pattern: str):
     ydl_opts = {
@@ -111,17 +133,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     status_msg = await update.message.reply_text("⏳ جاري جلب وتحميل المقطع، انتظر قليلاً...")
     chat_id = update.message.chat_id
-    output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
+    video_path = None
 
     try:
-        await asyncio.to_thread(download_video_file, text, output_pattern)
+        # إذا كان الرابط لتطبيق تيك توك
+        if "tiktok.com" in text:
+            output_file = f"video_{chat_id}.mp4"
+            success = await asyncio.to_thread(download_tiktok_direct, text, output_file)
+            if success:
+                video_path = output_file
+            else:
+                # محاولة ثانوية عبر yt-dlp إذا فشل المحرك المباشر
+                output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
+                await asyncio.to_thread(download_video_file, text, output_pattern)
+                files = glob.glob(f"video_{chat_id}_*")
+                if files:
+                    video_path = files[0]
+        else:
+            # بقية المنصات (Youtube Shorts / X / Instagram)
+            output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
+            await asyncio.to_thread(download_video_file, text, output_pattern)
+            files = glob.glob(f"video_{chat_id}_*")
+            if files:
+                video_path = files[0]
 
-        files = glob.glob(f"video_{chat_id}_*")
-        if not files:
+        if not video_path or not os.path.exists(video_path):
             await status_msg.edit_text("❌ تعذر تحميل المقطع. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.", reply_markup=get_main_keyboard())
             return
-
-        video_path = files[0]
 
         # التأكد من حجم الملف (حد تليجرام 50MB)
         file_size = os.path.getsize(video_path) / (1024 * 1024)
@@ -141,7 +179,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logging.error(f"Error handling video: {e}")
         await status_msg.edit_text("❌ حدث خطأ أثناء التحميل. حاول إرسال الرابط مرة أخرى.", reply_markup=get_main_keyboard())
-        for f in glob.glob(f"video_{chat_id}_*"):
+        for f in glob.glob(f"video_{chat_id}*"):
             try:
                 os.remove(f)
             except Exception:
