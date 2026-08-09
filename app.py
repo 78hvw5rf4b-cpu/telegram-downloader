@@ -29,6 +29,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def download_video_file(url: str, output_pattern: str):
     ydl_opts = {
+        # إعدادات متوافقة مع تيك توك، يوتيوب، وانستجرام
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': output_pattern,
         'quiet': True,
@@ -38,7 +39,7 @@ def download_video_file(url: str, output_pattern: str):
         ydl.download([url])
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text
+    text = update.message.text.strip()
     if not (text.startswith("http://") or text.startswith("https://")):
         await update.message.reply_text("الرجاء إرسال رابط فيديو صحيح.")
         return
@@ -52,7 +53,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         files = glob.glob(f"video_{chat_id}_*")
         if not files:
-            await status_msg.edit_text("❌ تعذر تحميل الفيديو. تأكد من صحة الرابط.")
+            await status_msg.edit_text("❌ تعذر تحميل الفيديو. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.")
             return
 
         video_path = files[0]
