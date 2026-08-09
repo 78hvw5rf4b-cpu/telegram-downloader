@@ -4,7 +4,6 @@ import asyncio
 import threading
 import json
 import glob
-import re
 import requests
 from flask import Flask
 import yt_dlp
@@ -27,7 +26,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- نظام حفظ وإحصاء عدد المستخدمين ---
+# --- نظام تسجيل وإحصاء جميع الأشخاص الذين دخلوا البوت ---
 USERS_FILE = "users_data.json"
 
 def load_users():
@@ -49,6 +48,7 @@ def save_users(users_set):
 users_list = load_users()
 
 def register_user(user_id):
+    """تسجيل ID أي شخص يدخل البوت أو يتفاعل معه لأول مرة"""
     if user_id not in users_list:
         users_list.add(user_id)
         save_users(users_list)
@@ -82,7 +82,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await query.message.reply_text("أهلاً بك مجدداً! أرسل رابط المقطع للتحميل (Shorts / X / TikTok ...)", reply_markup=get_main_keyboard())
     elif query.data == "cmd_stats":
         total_users = len(users_list)
-        await query.message.reply_text(f"📊 **إحصائيات البوت:**\n\nعدد الأشخاص الذين استخدموا البوت: {total_users}", reply_markup=get_main_keyboard())
+        await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد جميع الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
 
 # --- محرك خاص ومباشر لمقاطع TikTok لتجاوز الحظر ---
 
@@ -136,21 +136,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     video_path = None
 
     try:
-        # إذا كان الرابط لتطبيق تيك توك
         if "tiktok.com" in text:
             output_file = f"video_{chat_id}.mp4"
             success = await asyncio.to_thread(download_tiktok_direct, text, output_file)
             if success:
                 video_path = output_file
             else:
-                # محاولة ثانوية عبر yt-dlp إذا فشل المحرك المباشر
                 output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
                 await asyncio.to_thread(download_video_file, text, output_pattern)
                 files = glob.glob(f"video_{chat_id}_*")
                 if files:
                     video_path = files[0]
         else:
-            # بقية المنصات (Youtube Shorts / X / Instagram)
             output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
             await asyncio.to_thread(download_video_file, text, output_pattern)
             files = glob.glob(f"video_{chat_id}_*")
@@ -161,7 +158,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await status_msg.edit_text("❌ تعذر تحميل المقطع. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.", reply_markup=get_main_keyboard())
             return
 
-        # التأكد من حجم الملف (حد تليجرام 50MB)
         file_size = os.path.getsize(video_path) / (1024 * 1024)
         if file_size > 50:
             await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).", reply_markup=get_main_keyboard())
