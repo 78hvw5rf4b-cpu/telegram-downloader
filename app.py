@@ -3,8 +3,9 @@ import logging
 import asyncio
 import threading
 import json
-import requests
+import glob
 from flask import Flask
+import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -81,52 +82,23 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         total_users = len(users_list)
         await query.message.reply_text(f"📊 **إحصائيات البوت:**\n\nعدد الأشخاص الذين استخدموا البوت: {total_users}", reply_markup=get_main_keyboard())
 
-# --- آلية جلب وتحميل مقاطع الفيديو ---
+# --- دالة التحميل المباشر باستخدام yt-dlp المطور ---
 
-def download_file(url: str, dest_path: str):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    response = requests.get(url, stream=True, timeout=30, headers=headers)
-    response.raise_for_status()
-    with open(dest_path, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-
-def get_video_url_from_api(video_url: str):
-    # المحرك الأول
-    try:
-        api_url = "https://api.cobalt.tools/api/json"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0"
+def download_video_file(url: str, output_pattern: str):
+    ydl_opts = {
+        'format': 'b[ext=mp4]/best[ext=mp4]/best',
+        'outtmpl': output_pattern,
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
-        payload = {"url": video_url, "vQuality": "720"}
-        res = requests.post(api_url, json=payload, headers=headers, timeout=12)
-        if res.status_code == 200:
-            data = res.json()
-            if "url" in data:
-                return data["url"]
-            elif "picker" in data and len(data["picker"]) > 0:
-                return data["picker"][0]["url"]
-    except Exception as e:
-        logging.error(f"Primary API error: {e}")
-
-    # المحرك الاحتياطي المباشر
-    try:
-        backup_api = f"https://api.vxtwitter.com/status" if "twitter.com" in video_url or "x.com" in video_url else None
-        if backup_api and ("/status/" in video_url):
-            tweet_id = video_url.split("/status/")[1].split("?")[0]
-            res = requests.get(f"https://api.vxtwitter.com/i/status/{tweet_id}", timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                if "media_extended" in data and len(data["media_extended"]) > 0:
-                    return data["media_extended"][0]["url"]
-    except Exception as e:
-        logging.error(f"Backup API error: {e}")
-
-    return None
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -139,38 +111,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     status_msg = await update.message.reply_text("⏳ جاري جلب وتحميل المقطع، انتظر قليلاً...")
     chat_id = update.message.chat_id
-    output_file = f"video_{chat_id}.mp4"
+    output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
 
     try:
-        video_download_url = await asyncio.to_thread(get_video_url_from_api, text)
+        await asyncio.to_thread(download_video_file, text, output_pattern)
 
-        if not video_download_url:
-            await status_msg.edit_text("❌ تعذر جلب المقطع. تأكد من أن الرابط يعمل وأن المقطع ليس من حساب خاص مغلق.", reply_markup=get_main_keyboard())
+        files = glob.glob(f"video_{chat_id}_*")
+        if not files:
+            await status_msg.edit_text("❌ تعذر تحميل المقطع. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.", reply_markup=get_main_keyboard())
             return
 
-        await asyncio.to_thread(download_file, video_download_url, output_file)
+        video_path = files[0]
 
         # التأكد من حجم الملف (حد تليجرام 50MB)
-        file_size = os.path.getsize(output_file) / (1024 * 1024)
+        file_size = os.path.getsize(video_path) / (1024 * 1024)
         if file_size > 50:
             await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).", reply_markup=get_main_keyboard())
-            os.remove(output_file)
+            os.remove(video_path)
             return
 
         await status_msg.edit_text("⬆️ جاري إرسال الفيديو...")
 
-        with open(output_file, 'rb') as video:
+        with open(video_path, 'rb') as video:
             await update.message.reply_video(video=video)
 
-        os.remove(output_file)
+        os.remove(video_path)
         await status_msg.delete()
 
     except Exception as e:
         logging.error(f"Error handling video: {e}")
-        await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الفيديو. حاول إرسال الرابط مرة أخرى.", reply_markup=get_main_keyboard())
-        if os.path.exists(output_file):
+        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل. حاول إرسال الرابط مرة أخرى.", reply_markup=get_main_keyboard())
+        for f in glob.glob(f"video_{chat_id}_*"):
             try:
-                os.remove(output_file)
+                os.remove(f)
             except Exception:
                 pass
 
