@@ -34,10 +34,9 @@ def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if user_id not in context.bot_data["all_users"]:
         context.bot_data["all_users"].add(user_id)
 
-# --- الأزرار والقائمة الموحدة (تمت إضافة زر القناة) ---
+# --- الأزرار والقائمة الموحدة مع رابط القناة الخاص بك ---
 
-# ضع رابط قناتك هنا مكان الرابط الموضح
-CHANNEL_LINK = "httpshttps://t.me/Abu_na9r" 
+CHANNEL_LINK = "https://t.me/Abu_na9r"
 
 def get_main_keyboard():
     keyboard = [
