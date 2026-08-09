@@ -43,6 +43,9 @@ def get_main_keyboard():
             InlineKeyboardButton("📊 الإحصائيات", callback_data="cmd_stats")
         ],
         [
+            InlineKeyboardButton("💬 دردشة مع الذكاء الاصطناعي 🤖", callback_data="cmd_ai_chat")
+        ],
+        [
             InlineKeyboardButton("📢 قناة التحديثات وكل شي جديد 🎁", url=CHANNEL_LINK)
         ]
     ]
@@ -64,7 +67,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
     await update.message.reply_text(
-        "أهلاً بك في بوت Abu na9r! 🖐️\nأرسل رابط المقطع واختر الخدمات المتاحة (تحميل أو تحليل بالذكاء الاصطناعي):",
+        "أهلاً بك في بوت Abu na9r! 🖐️\nيمكنك إرسال رابط لتحميله أو تحليله، أو الضغط على 'دردشة' للتحدث مع الذكاء الاصطناعي:",
         reply_markup=get_main_keyboard()
     )
 
@@ -145,15 +148,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     register_user(context, user_id)
 
     text = update.message.text.strip()
-    if not (text.startswith("http://") or text.startswith("https://")):
-        await update.message.reply_text("الرجاء إرسال رابط فيديو صحيح.", reply_markup=get_main_keyboard())
+
+    # إذا كان المستخدم في وضع الدردشة مع الذكاء الاصطناعي
+    if context.user_data.get("ai_mode"):
+        status_msg = await update.message.reply_text("🤖 يفكر الذكاء الاصطناعي...")
+        ai_reply = await asyncio.to_thread(ask_gemini_ai, text)
+        await status_msg.edit_text(f"🤖 **الذكاء الاصطناعي:**\n\n{ai_reply}", reply_markup=get_main_keyboard())
         return
 
-    context.user_data["pending_url"] = text
-    await update.message.reply_text(
-        "✨ تم استلام الرابط بنجاح! اختر الخدمة المطلوبة:",
-        reply_markup=get_action_keyboard()
-    )
+    # إذا أرسل رابط
+    if text.startswith("http://") or text.startswith("https://"):
+        context.user_data["pending_url"] = text
+        await update.message.reply_text(
+            "✨ تم استلام الرابط بنجاح! اختر الخدمة المطلوبة:",
+            reply_markup=get_action_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            "الرجاء إرسال رابط فيديو صحيح للتحميل، أو اضغط زر 'دردشة مع الذكاء الاصطناعي' للسؤال والحديث مع المساعد الذكي.",
+            reply_markup=get_main_keyboard()
+        )
 
 # --- معالجة الضغط على الأزرار ---
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -163,22 +177,31 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     register_user(context, user_id)
 
     if query.data == "cmd_start":
-        await query.message.reply_text("أهلاً بك مجدداً! أرسل رابط المقطع للتحميل أو التحليل.", reply_markup=get_main_keyboard())
+        context.user_data["ai_mode"] = False
+        await query.message.reply_text("أهلاً بك مجدداً! أرسل رابط المقطع للتحميل أو اختر الدردشة.", reply_markup=get_main_keyboard())
+    
     elif query.data == "cmd_stats":
+        context.user_data["ai_mode"] = False
         total_users = len(context.bot_data.get("all_users", set()))
         await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد جميع الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
     
+    elif query.data == "cmd_ai_chat":
+        context.user_data["ai_mode"] = True
+        await query.message.reply_text("💬 **تم تفعيل وضع الدردشة!**\n\nاسألني أو اسولف معي عن أي موضوع تريد، اكتب سؤالك ورسالتك الآن مباشرة 👇", reply_markup=get_main_keyboard())
+
     elif query.data == "action_download":
+        context.user_data["ai_mode"] = False
         url = context.user_data.get("pending_url")
         if not url:
-            await query.message.reply_text("❌ انتهت الجلسة أو لم يتم العثور على رابط. يرجى إرسال الرابط مجدداً.", reply_markup=get_main_keyboard())
+            await query.message.reply_text("❌ لم يتم العثور على رابط. يرجى إرسال الرابط مجدداً.", reply_markup=get_main_keyboard())
             return
         await process_download(query, context, url)
         
     elif query.data == "action_ai":
+        context.user_data["ai_mode"] = False
         url = context.user_data.get("pending_url")
         if not url:
-            await query.message.reply_text("❌ انتهت الجلسة أو لم يتم العثور على رابط. يرجى إرسال الرابط مجدداً.", reply_markup=get_main_keyboard())
+            await query.message.reply_text("❌ لم يتم العثور على رابط. يرجى إرسال الرابط مجدداً.", reply_markup=get_main_keyboard())
             return
         await process_ai_analysis(query, context, url)
 
@@ -234,7 +257,7 @@ async def process_download(query, context, url):
             except Exception:
                 pass
 
-# --- معالجة الذكاء الاصطناعي ---
+# --- معالجة تحليل الفيديو بالذكاء الاصطناعي ---
 async def process_ai_analysis(query, context, url):
     status_msg = await query.message.reply_text("🤖 جاري استخراج معلومات الفيديو وتحليل المحتوى بالذكاء الاصطناعي...")
     
