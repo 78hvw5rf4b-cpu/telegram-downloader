@@ -3,6 +3,7 @@ import logging
 import asyncio
 import threading
 import glob
+import json
 from flask import Flask
 import yt_dlp
 from telegram import Update
@@ -24,21 +25,65 @@ threading.Thread(target=run_web, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
+# --- نظام حفظ وحساب عدد المستخدمين ---
+USERS_FILE = "users.json"
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+def save_users(users_set):
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump(list(users_set), f)
+    except Exception as e:
+        logging.error(f"Error saving users: {e}")
+
+users_list = load_users()
+
+def register_user(user_id):
+    if user_id not in users_list:
+        users_list.add(user_id)
+        save_users(users_list)
+
+# --- الأوامر والخدمات ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    register_user(user_id)
     await update.message.reply_text("أهلاً معك بوت Abu na9r ارسل رابط المقطع")
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # عرض إحصائية عدد المشتركين في البوت
+    total_users = len(users_list)
+    await update.message.reply_text(f"📊 **إحصائيات البوت:**\n\nعدد الأشخاص الذين استخدموا البوت: {total_users}")
 
 def download_video_file(url: str, output_pattern: str):
     ydl_opts = {
-        # صيغة تعمل بكفاءة مع X (Twitter) واليوتيوب Shorts وتيك توك وانستجرام
-        'format': 'best[ext=mp4]/best',
+        # صيغة خفيفة تدعم Shorts وتويتر والتيك توك
+        'format': 'b[ext=mp4]/best[ext=mp4]/best',
         'outtmpl': output_pattern,
         'quiet': True,
         'no_warnings': True,
+        # خيارات لتجاوز قيود الخوادم والحظر
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    register_user(user_id)  # تسجيل المستخدم عند إرسال أي رابط
+    
     text = update.message.text.strip()
     if not (text.startswith("http://") or text.startswith("https://")):
         await update.message.reply_text("الرجاء إرسال رابط فيديو صحيح.")
@@ -53,12 +98,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         files = glob.glob(f"video_{chat_id}_*")
         if not files:
-            await status_msg.edit_text("❌ تعذر تحميل الفيديو. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.")
+            await status_msg.edit_text("❌ تعذر تحميل الفيديو. تأكد من صحة الرابط.")
             return
 
         video_path = files[0]
         
-        # التأكد من حجم الملف (حد تليجرام المباشر 50MB)
         file_size = os.path.getsize(video_path) / (1024 * 1024)
         if file_size > 50:
             await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).")
@@ -75,7 +119,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except Exception as e:
         logging.error(f"Error: {e}")
-        await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الفيديو.")
+        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل.")
         for f in glob.glob(f"video_{chat_id}_*"):
             try:
                 os.remove(f)
@@ -91,6 +135,7 @@ def main():
     application = Application.builder().token(token).build()
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("stats", stats))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     application.run_polling()
