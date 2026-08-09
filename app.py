@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio
 import threading
-import json
 import glob
 import requests
 from flask import Flask
@@ -26,32 +25,15 @@ threading.Thread(target=run_web, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- نظام تسجيل وإحصاء جميع الأشخاص الذين دخلوا البوت ---
-USERS_FILE = "users_data.json"
+# --- نظام حفظ دائم ومضمون عبر Telegram context.bot_data ---
 
-def load_users():
-    if os.path.exists(USERS_FILE):
-        try:
-            with open(USERS_FILE, "r") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-    return set()
-
-def save_users(users_set):
-    try:
-        with open(USERS_FILE, "w") as f:
-            json.dump(list(users_set), f)
-    except Exception as e:
-        logging.error(f"Error saving users: {e}")
-
-users_list = load_users()
-
-def register_user(user_id):
-    """تسجيل ID أي شخص يدخل البوت أو يتفاعل معه لأول مرة"""
-    if user_id not in users_list:
-        users_list.add(user_id)
-        save_users(users_list)
+def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """حفظ دائم ومستمر لجميع IDs المستخدمين بدون فقدان"""
+    if "all_users" not in context.bot_data:
+        context.bot_data["all_users"] = set()
+    
+    if user_id not in context.bot_data["all_users"]:
+        context.bot_data["all_users"].add(user_id)
 
 # --- الأزرار والقائمة الموحدة ---
 
@@ -66,7 +48,7 @@ def get_main_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    register_user(user_id)
+    register_user(context, user_id)
     await update.message.reply_text(
         "أهلاً بك في بوت Abu na9r! 🖐️\nاختر من القائمة أدناه أو أرسل رابط المقطع مباشرة للتحميل:",
         reply_markup=get_main_keyboard()
@@ -76,12 +58,12 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    register_user(user_id)
+    register_user(context, user_id)
 
     if query.data == "cmd_start":
         await query.message.reply_text("أهلاً بك مجدداً! أرسل رابط المقطع للتحميل (Shorts / X / TikTok ...)", reply_markup=get_main_keyboard())
     elif query.data == "cmd_stats":
-        total_users = len(users_list)
+        total_users = len(context.bot_data.get("all_users", set()))
         await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد جميع الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
 
 # --- محرك خاص ومباشر لمقاطع TikTok لتجاوز الحظر ---
@@ -104,7 +86,7 @@ def download_tiktok_direct(url: str, output_path: str) -> bool:
         logging.error(f"TikTok Direct API error: {e}")
     return False
 
-# --- دالة التحميل العامة للمناصات الأخرى (Shorts / X) ---
+# --- دالة التحميل العامة للمنصات الأخرى ---
 
 def download_video_file(url: str, output_pattern: str):
     ydl_opts = {
@@ -124,7 +106,7 @@ def download_video_file(url: str, output_pattern: str):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    register_user(user_id)
+    register_user(context, user_id)
 
     text = update.message.text.strip()
     if not (text.startswith("http://") or text.startswith("https://")):
