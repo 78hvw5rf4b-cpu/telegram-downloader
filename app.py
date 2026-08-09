@@ -81,14 +81,52 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         total_users = len(users_list)
         await query.message.reply_text(f"📊 **إحصائيات البوت:**\n\nعدد الأشخاص الذين استخدموا البوت: {total_users}", reply_markup=get_main_keyboard())
 
-# --- آلية التحميل المباشرة ---
+# --- آلية جلب وتحميل مقاطع الفيديو ---
 
 def download_file(url: str, dest_path: str):
-    response = requests.get(url, stream=True, timeout=30)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    response = requests.get(url, stream=True, timeout=30, headers=headers)
     response.raise_for_status()
     with open(dest_path, 'wb') as f:
         for chunk in response.iter_content(chunk_size=8192):
             f.write(chunk)
+
+def get_video_url_from_api(video_url: str):
+    # المحرك الأول
+    try:
+        api_url = "https://api.cobalt.tools/api/json"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0"
+        }
+        payload = {"url": video_url, "vQuality": "720"}
+        res = requests.post(api_url, json=payload, headers=headers, timeout=12)
+        if res.status_code == 200:
+            data = res.json()
+            if "url" in data:
+                return data["url"]
+            elif "picker" in data and len(data["picker"]) > 0:
+                return data["picker"][0]["url"]
+    except Exception as e:
+        logging.error(f"Primary API error: {e}")
+
+    # المحرك الاحتياطي المباشر
+    try:
+        backup_api = f"https://api.vxtwitter.com/status" if "twitter.com" in video_url or "x.com" in video_url else None
+        if backup_api and ("/status/" in video_url):
+            tweet_id = video_url.split("/status/")[1].split("?")[0]
+            res = requests.get(f"https://api.vxtwitter.com/i/status/{tweet_id}", timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if "media_extended" in data and len(data["media_extended"]) > 0:
+                    return data["media_extended"][0]["url"]
+    except Exception as e:
+        logging.error(f"Backup API error: {e}")
+
+    return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -104,29 +142,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     output_file = f"video_{chat_id}.mp4"
 
     try:
-        # محرك Cobalt لتجاوز الحظر وتحميل MP4 جاهز من Shorts و X وغيرها
-        api_url = "https://api.cobalt.tools/api/json"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "url": text,
-            "vQuality": "720"
-        }
+        video_download_url = await asyncio.to_thread(get_video_url_from_api, text)
 
-        res = await asyncio.to_thread(requests.post, api_url, json=payload, headers=headers, timeout=15)
-        data = res.json()
-
-        if "url" not in data:
-            await status_msg.edit_text("❌ تعذر تحميل هذا الرابط. تأكد أن المقطع ليس من حساب خاص.", reply_markup=get_main_keyboard())
+        if not video_download_url:
+            await status_msg.edit_text("❌ تعذر جلب المقطع. تأكد من أن الرابط يعمل وأن المقطع ليس من حساب خاص مغلق.", reply_markup=get_main_keyboard())
             return
-
-        video_download_url = data["url"]
 
         await asyncio.to_thread(download_file, video_download_url, output_file)
 
-        # التأكد من عدم تجاوز حد 50 ميجابايت لمنع انهيار السيرفر
+        # التأكد من حجم الملف (حد تليجرام 50MB)
         file_size = os.path.getsize(output_file) / (1024 * 1024)
         if file_size > 50:
             await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).", reply_markup=get_main_keyboard())
@@ -143,7 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except Exception as e:
         logging.error(f"Error handling video: {e}")
-        await status_msg.edit_text("❌ حدث خطأ أثناء جلب الفيديو. جرب رابطاً آخر.", reply_markup=get_main_keyboard())
+        await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الفيديو. حاول إرسال الرابط مرة أخرى.", reply_markup=get_main_keyboard())
         if os.path.exists(output_file):
             try:
                 os.remove(output_file)
