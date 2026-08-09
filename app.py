@@ -25,10 +25,9 @@ threading.Thread(target=run_web, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- نظام حفظ دائم ومضمون عبر Telegram context.bot_data ---
+# --- نظام حفظ دائم لعدد المستخدمين ---
 
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    """حفظ دائم ومستمر لجميع IDs المستخدمين بدون فقدان"""
     if "all_users" not in context.bot_data:
         context.bot_data["all_users"] = set()
     
@@ -38,10 +37,16 @@ def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 # --- الأزرار والقائمة الموحدة ---
 
 def get_main_keyboard():
+    # يجلب رابط القناة من متغيرات البيئة في Render، وإذا لم يجده يضع رابطاً افتراضياً
+    channel_link = os.environ.get("CHANNEL_LINK", "https://t.me/telegram")
+    
     keyboard = [
         [
             InlineKeyboardButton("🚀 البدء / Start", callback_data="cmd_start"),
             InlineKeyboardButton("📊 الإحصائيات", callback_data="cmd_stats")
+        ],
+        [
+            InlineKeyboardButton("📢 قناة التحديثات وكل شي جديد 🎁", url=channel_link)
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -66,7 +71,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         total_users = len(context.bot_data.get("all_users", set()))
         await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد جميع الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
 
-# --- محرك خاص ومباشر لمقاطع TikTok لتجاوز الحظر ---
+# --- محرك خاص ومباشر لمقاطع TikTok ---
 
 def download_tiktok_direct(url: str, output_path: str) -> bool:
     try:
