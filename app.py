@@ -42,9 +42,6 @@ def get_main_keyboard():
             InlineKeyboardButton("📊 الإحصائيات", callback_data="cmd_stats")
         ],
         [
-            InlineKeyboardButton("💬 دردشة مع الذكاء الاصطناعي 🤖", callback_data="cmd_ai_chat")
-        ],
-        [
             InlineKeyboardButton("📢 قناة التحديثات وكل شي جديد 🎁", url=CHANNEL_LINK)
         ]
     ]
@@ -53,8 +50,7 @@ def get_main_keyboard():
 def get_action_keyboard():
     keyboard = [
         [
-            InlineKeyboardButton("📥 تحميل المقطع", callback_data="action_download"),
-            InlineKeyboardButton("🤖 تحليل بالذكاء الاصطناعي", callback_data="action_ai")
+            InlineKeyboardButton("📥 تحميل المقطع", callback_data="action_download")
         ],
         [
             InlineKeyboardButton("📢 قناة التحديثات وكل شي جديد 🎁", url=CHANNEL_LINK)
@@ -65,9 +61,8 @@ def get_action_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
-    context.chat_data["ai_mode"] = False
     await update.message.reply_text(
-        "أهلاً بك في بوت Abu na9r! 🖐️\nيمكنك إرسال رابط لتحميله أو تحليله، أو الضغط على 'دردشة' للتحدث مع الذكاء الاصطناعي:",
+        "أهلاً بك في بوت Abu na9r! 🖐️\nأرسل رابط المقطع للتحميل المباشر:",
         reply_markup=get_main_keyboard()
     )
 
@@ -107,41 +102,6 @@ def download_video_file(url: str, output_pattern: str):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
-# --- استخراج بيانات الفيديو للذكاء الاصطناعي ---
-def get_video_info(url: str):
-    try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return info.get('title', ''), info.get('description', '')
-    except Exception as e:
-        logging.error(f"Error fetching info: {e}")
-        return "", ""
-
-# --- محرك الذكاء الاصطناعي Gemini ---
-def ask_gemini_ai(prompt: str) -> str:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return "⚠️ خدمة الذكاء الاصطناعي تحتاج إضافة GEMINI_API_KEY في متغيرات البيئة بالاستضافة."
-    
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
-    try:
-        res = requests.post(endpoint, json=payload, headers=headers, timeout=30)
-        if res.status_code == 200:
-            data = res.json()
-            return data['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return "❌ تعذر الحصول على استجابة من الذكاء الاصطناعي حالياً."
-    except Exception as e:
-        logging.error(f"Gemini API Error: {e}")
-        return "❌ حدث خطأ أثناء الاتصال بخدمة الذكاء الاصطناعي."
-
 # --- استقبال الرسائل ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -149,25 +109,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text.strip()
 
-    # 1. إذا أرسل المستخدم رابطاً (ينتقل فوراً لخيارات الفيديو)
+    # إذا أرسل المستخدم رابطاً
     if text.startswith("http://") or text.startswith("https://"):
         context.chat_data["pending_url"] = text
         await update.message.reply_text(
-            "✨ تم استلام الرابط بنجاح! اختر الخدمة المطلوبة:",
+            "✨ تم استلام الرابط بنجاح! اضغط على زر التحميل أدناه:",
             reply_markup=get_action_keyboard()
         )
         return
 
-    # 2. إذا كان مفتاح الدردشة مفعّلاً لدى المستخدم
-    if context.chat_data.get("ai_mode") is True:
-        status_msg = await update.message.reply_text("🤖 يفكر الذكاء الاصطناعي...")
-        ai_reply = await asyncio.to_thread(ask_gemini_ai, text)
-        await status_msg.edit_text(f"🤖 **الذكاء الاصطناعي:**\n\n{ai_reply}", reply_markup=get_main_keyboard())
-        return
-
-    # 3. النص العادي دون تفعيل الوضع
+    # النص العادي
     await update.message.reply_text(
-        "الرجاء إرسال رابط فيديو صحيح للتحميل، أو اضغط زر '💬 دردشة مع الذكاء الاصطناعي' للتحدث معي مباشرة.",
+        "الرجاء إرسال رابط فيديو صحيح للتحميل.",
         reply_markup=get_main_keyboard()
     )
 
@@ -179,16 +132,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     register_user(context, user_id)
 
     if query.data == "cmd_start":
-        context.chat_data["ai_mode"] = False
-        await query.message.reply_text("أهلاً بك مجدداً! أرسل رابط المقطع للتحميل أو اختر الدردشة.", reply_markup=get_main_keyboard())
+        await query.message.reply_text("أهلاً بك مجدداً! أرسل رابط المقطع للتحميل.", reply_markup=get_main_keyboard())
     
     elif query.data == "cmd_stats":
         total_users = len(context.bot_data.get("all_users", set()))
         await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد جميع الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
-    
-    elif query.data == "cmd_ai_chat":
-        context.chat_data["ai_mode"] = True
-        await query.message.reply_text("💬 **تم تفعيل وضع الدردشة!**\n\nاسألني أو اسولف معي عن أي موضوع تريد، اكتب سؤالك ورسالتك الآن مباشرة 👇", reply_markup=get_main_keyboard())
 
     elif query.data == "action_download":
         url = context.chat_data.get("pending_url")
@@ -196,13 +144,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await query.message.reply_text("❌ لم يتم العثور على رابط. يرجى إرسال الرابط مجدداً.", reply_markup=get_main_keyboard())
             return
         await process_download(query, context, url)
-        
-    elif query.data == "action_ai":
-        url = context.chat_data.get("pending_url")
-        if not url:
-            await query.message.reply_text("❌ لم يتم العثور على رابط. يرجى إرسال الرابط مجدداً.", reply_markup=get_main_keyboard())
-            return
-        await process_ai_analysis(query, context, url)
 
 # --- معالجة التحميل ---
 async def process_download(query, context, url):
@@ -255,25 +196,6 @@ async def process_download(query, context, url):
                 os.remove(f)
             except Exception:
                 pass
-
-# --- معالجة تحليل الفيديو بالذكاء الاصطناعي ---
-async def process_ai_analysis(query, context, url):
-    status_msg = await query.message.reply_text("🤖 جاري استخراج معلومات الفيديو وتحليل المحتوى بالذكاء الاصطناعي...")
-    
-    title, description = await asyncio.to_thread(get_video_info, url)
-    
-    prompt = (
-        "أنت مساعد ذكي ومحترف. قم بتقديم ملخص وشرح باللغة العربية الواضحة والشائقة لهذا الفيديو بناءً على عنوانه ووصفه:\n\n"
-        f"عنوان الفيديو: {title if title else 'غير متاح'}\n"
-        f"وصف الفيديو: {description if description else 'غير متاح'}\n"
-        f"رابط الفيديو: {url}\n\n"
-        "قدم ملخصاً للنقاط الرئيسية وأهم الفوائد باختصار وجاذبية."
-    )
-    
-    ai_response = await asyncio.to_thread(ask_gemini_ai, prompt)
-    
-    final_text = f"🤖 **تحليل الذكاء الاصطناعي للمقطع:**\n\n{ai_response}"
-    await status_msg.edit_text(final_text, reply_markup=get_main_keyboard())
 
 def main():
     token = os.environ.get("BOT_TOKEN")
