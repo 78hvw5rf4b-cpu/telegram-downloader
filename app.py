@@ -9,7 +9,7 @@ import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# --- سيرفر Flask لضمان استمرار عمل Render بدون توقف ---
+# --- سيرفر Flask لضمان استمرار عمل Render ---
 app_web = Flask(__name__)
 
 @app_web.route('/')
@@ -66,8 +66,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=get_main_keyboard()
     )
 
-# --- محرك تحميل متطور يدعم الفيديو والصور من جميع المنصات ---
-def download_media_direct(url: str, output_prefix: str):
+# --- محرك خاص لتيك توك لتجاوز حظر السيرفرات ---
+def download_tiktok_api(url: str, output_path: str) -> bool:
+    try:
+        api_url = f"https://api.tiklydown.eu.org/api/download?url={url}"
+        res = requests.get(api_url, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            video_url = data.get("video", {}).get("noWatermark") or data.get("video", {}).get("watermark")
+            if video_url:
+                v_res = requests.get(video_url, stream=True, timeout=30)
+                if v_res.status_code == 200:
+                    with open(output_path, 'wb') as f:
+                        for chunk in v_res.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    return True
+    except Exception as e:
+        logging.error(f"TikTok Direct API Error: {e}")
+    return False
+
+# --- محرك تحميل عام للمنصات الأخرى ---
+def download_media_general(url: str, output_prefix: str):
     ydl_opts = {
         'format': 'best',
         'outtmpl': f'{output_prefix}_%(id)s.%(ext)s',
@@ -77,7 +96,6 @@ def download_media_direct(url: str, output_prefix: str):
         'geo_bypass': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -129,18 +147,28 @@ async def process_download(query, context, url):
     status_msg = await query.message.reply_text("⏳ جاري جلب وتحميل المحتوى، انتظر لحظة...")
     chat_id = query.message.chat_id
     output_prefix = f"media_{chat_id}"
+    downloaded_file = None
 
     try:
-        await asyncio.to_thread(download_media_direct, url, output_prefix)
-        files = glob.glob(f"{output_prefix}_*")
+        # معالجة رابط تيك توك بشكل خاص
+        if "tiktok.com" in url or "vt.tiktok.com" in url:
+            target_path = f"{output_prefix}_tiktok.mp4"
+            success = await asyncio.to_thread(download_tiktok_api, url, target_path)
+            if success:
+                downloaded_file = target_path
 
-        if not files:
+        # إذا لم يكن تيك توك أو فشل الـ API، استخدم المحرك العام
+        if not downloaded_file:
+            await asyncio.to_thread(download_media_general, url, output_prefix)
+            files = glob.glob(f"{output_prefix}_*")
+            if files:
+                downloaded_file = files[0]
+
+        if not downloaded_file or not os.path.exists(downloaded_file):
             await status_msg.edit_text("❌ تعذر تحميل المحتوى. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.", reply_markup=get_main_keyboard())
             return
 
-        downloaded_file = files[0]
         file_size = os.path.getsize(downloaded_file) / (1024 * 1024)
-
         if file_size > 50:
             await status_msg.edit_text("❌ حجم الملف كبير جداً (يتجاوز 50 ميجابايت).", reply_markup=get_main_keyboard())
             os.remove(downloaded_file)
@@ -148,7 +176,7 @@ async def process_download(query, context, url):
 
         await status_msg.edit_text("⬆️ جاري إرسال المحتوى...")
 
-        # التمييز التلقائي بين الصور والفيديوهات وإرسالها
+        # التمييز بين الصور والفيديو وإرسالها
         ext = os.path.splitext(downloaded_file)[1].lower()
         if ext in ['.jpg', '.jpeg', '.png', '.webp']:
             with open(downloaded_file, 'rb') as photo:
@@ -157,7 +185,6 @@ async def process_download(query, context, url):
             with open(downloaded_file, 'rb') as video:
                 await query.message.reply_video(video=video)
 
-        # تنظيف الملفات المؤقتة بعد الإرسال
         os.remove(downloaded_file)
         await status_msg.delete()
 
