@@ -9,12 +9,12 @@ import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# --- سيرفر Flask لإرضاء Render ومنعه من الإغلاق ---
+# --- سيرفر Flask لضمان استمرار عمل Render ---
 app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
-    return "Bot is alive!"
+    return "Bot is alive and running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -25,14 +25,14 @@ threading.Thread(target=run_web, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- نظام حفظ دائم ومضمون لعدد المستخدمين ---
+# --- تسجيل حفظ عدد المستخدمين ---
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
         context.bot_data["all_users"] = set()
     if user_id not in context.bot_data["all_users"]:
         context.bot_data["all_users"].add(user_id)
 
-# --- الأزرار والقائمة الموحدة ---
+# --- الأزرار والقوائم ---
 CHANNEL_LINK = "https://t.me/Abu_na9r"
 
 def get_main_keyboard():
@@ -50,7 +50,7 @@ def get_main_keyboard():
 def get_action_keyboard():
     keyboard = [
         [
-            InlineKeyboardButton("📥 تحميل المقطع", callback_data="action_download")
+            InlineKeyboardButton("📥 تحميل المحتوى", callback_data="action_download")
         ],
         [
             InlineKeyboardButton("📢 قناة التحديثات وكل شي جديد 🎁", url=CHANNEL_LINK)
@@ -62,41 +62,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
     await update.message.reply_text(
-        "أهلاً بك في بوت Abu na9r! 🖐️\nأرسل رابط المقطع للتحميل المباشر:",
+        "أهلاً بك في بوت Abu na9r! 🖐️\nأرسل رابط المقطع أو الصورة للتحميل المباشر:",
         reply_markup=get_main_keyboard()
     )
 
-# --- محرك خاص ومباشر لمقاطع TikTok لتجاوز الحظر ---
-def download_tiktok_direct(url: str, output_path: str) -> bool:
-    try:
-        api_url = f"https://api.tiklydown.eu.org/api/download?url={url}"
-        res = requests.get(api_url, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            video_url = data.get("video", {}).get("noWatermark") or data.get("video", {}).get("watermark")
-            if video_url:
-                v_res = requests.get(video_url, stream=True, timeout=30)
-                if v_res.status_code == 200:
-                    with open(output_path, 'wb') as f:
-                        for chunk in v_res.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    return True
-    except Exception as e:
-        logging.error(f"TikTok Direct API error: {e}")
-    return False
-
-# --- دالة التحميل العامة للمنصات الأخرى ---
-def download_video_file(url: str, output_pattern: str):
+# --- محرك تحميل متطور يغطي الصور والمقاطع وتيك توك ---
+def download_media_direct(url: str, output_prefix: str):
     ydl_opts = {
-        'format': 'b[ext=mp4]/best[ext=mp4]/best',
-        'outtmpl': output_pattern,
+        'format': 'best',
+        'outtmpl': f'{output_prefix}_%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -109,7 +89,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text.strip()
 
-    # إذا أرسل المستخدم رابطاً
     if text.startswith("http://") or text.startswith("https://"):
         context.chat_data["pending_url"] = text
         await update.message.reply_text(
@@ -118,9 +97,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # النص العادي
     await update.message.reply_text(
-        "الرجاء إرسال رابط فيديو صحيح للتحميل.",
+        "الرجاء إرسال رابط صحيح للتحميل.",
         reply_markup=get_main_keyboard()
     )
 
@@ -132,7 +110,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     register_user(context, user_id)
 
     if query.data == "cmd_start":
-        await query.message.reply_text("أهلاً بك مجدداً! أرسل رابط المقطع للتحميل.", reply_markup=get_main_keyboard())
+        await query.message.reply_text("أهلاً بك مجدداً! أرسل الرابط للتحميل.", reply_markup=get_main_keyboard())
     
     elif query.data == "cmd_stats":
         total_users = len(context.bot_data.get("all_users", set()))
@@ -145,53 +123,46 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         await process_download(query, context, url)
 
-# --- معالجة التحميل ---
+# --- معالجة وإرسال الصور والفيديوهات ---
 async def process_download(query, context, url):
-    status_msg = await query.message.reply_text("⏳ جاري جلب وتحميل المقطع، انتظر قليلاً...")
+    status_msg = await query.message.reply_text("⏳ جاري التحميل، انتظر لحظة...")
     chat_id = query.message.chat_id
-    video_path = None
+    output_prefix = f"media_{chat_id}"
 
     try:
-        if "tiktok.com" in url:
-            output_file = f"video_{chat_id}.mp4"
-            success = await asyncio.to_thread(download_tiktok_direct, url, output_file)
-            if success:
-                video_path = output_file
-            else:
-                output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
-                await asyncio.to_thread(download_video_file, url, output_pattern)
-                files = glob.glob(f"video_{chat_id}_*")
-                if files:
-                    video_path = files[0]
-        else:
-            output_pattern = f"video_{chat_id}_%(id)s.%(ext)s"
-            await asyncio.to_thread(download_video_file, url, output_pattern)
-            files = glob.glob(f"video_{chat_id}_*")
-            if files:
-                video_path = files[0]
+        await asyncio.to_thread(download_media_direct, url, output_prefix)
+        files = glob.glob(f"{output_prefix}_*")
 
-        if not video_path or not os.path.exists(video_path):
-            await status_msg.edit_text("❌ تعذر تحميل المقطع. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.", reply_markup=get_main_keyboard())
+        if not files:
+            await status_msg.edit_text("❌ تعذر تحميل المحتوى. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.", reply_markup=get_main_keyboard())
             return
 
-        file_size = os.path.getsize(video_path) / (1024 * 1024)
+        downloaded_file = files[0]
+        file_size = os.path.getsize(downloaded_file) / (1024 * 1024)
+
         if file_size > 50:
-            await status_msg.edit_text("❌ حجم الفيديو كبير جداً (يتجاوز 50 ميجابايت).", reply_markup=get_main_keyboard())
-            os.remove(video_path)
+            await status_msg.edit_text("❌ حجم الملف كبير جداً (يتجاوز 50 ميجابايت).", reply_markup=get_main_keyboard())
+            os.remove(downloaded_file)
             return
 
-        await status_msg.edit_text("⬆️ جاري إرسال الفيديو...")
+        await status_msg.edit_text("⬆️ جاري إرسال الملف...")
 
-        with open(video_path, 'rb') as video:
-            await query.message.reply_video(video=video)
+        # تحديد ما إذا كان الملف صورة أو فيديو وإرساله
+        if downloaded_file.endswith(('.jpg', '.png', '.jpeg', '.webp')):
+            with open(downloaded_file, 'rb') as photo:
+                await query.message.reply_photo(photo=photo)
+        else:
+            with open(downloaded_file, 'rb') as video:
+                await query.message.reply_video(video=video)
 
-        os.remove(video_path)
+        # نظف الملفات المحملة
+        os.remove(downloaded_file)
         await status_msg.delete()
 
     except Exception as e:
-        logging.error(f"Error handling video: {e}")
+        logging.error(f"Error handling media: {e}")
         await status_msg.edit_text("❌ حدث خطأ أثناء التحميل. حاول إرسال الرابط مرة أخرى.", reply_markup=get_main_keyboard())
-        for f in glob.glob(f"video_{chat_id}*"):
+        for f in glob.glob(f"{output_prefix}*"):
             try:
                 os.remove(f)
             except Exception:
