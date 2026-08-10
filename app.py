@@ -9,7 +9,7 @@ import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# --- سيرفر Flask لضمان استمرار عمل Render ---
+# --- سيرفر Flask لضمان استمرار عمل Render بدون توقف ---
 app_web = Flask(__name__)
 
 @app_web.route('/')
@@ -25,7 +25,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- تسجيل حفظ عدد المستخدمين ---
+# --- نظام حفظ وإحصائيات عدد المستخدمين ---
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
         context.bot_data["all_users"] = set()
@@ -66,7 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=get_main_keyboard()
     )
 
-# --- محرك تحميل متطور يغطي الصور والمقاطع وتيك توك ---
+# --- محرك تحميل متطور يدعم الفيديو والصور من جميع المنصات ---
 def download_media_direct(url: str, output_prefix: str):
     ydl_opts = {
         'format': 'best',
@@ -76,7 +76,8 @@ def download_media_direct(url: str, output_prefix: str):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -125,7 +126,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # --- معالجة وإرسال الصور والفيديوهات ---
 async def process_download(query, context, url):
-    status_msg = await query.message.reply_text("⏳ جاري التحميل، انتظر لحظة...")
+    status_msg = await query.message.reply_text("⏳ جاري جلب وتحميل المحتوى، انتظر لحظة...")
     chat_id = query.message.chat_id
     output_prefix = f"media_{chat_id}"
 
@@ -145,17 +146,18 @@ async def process_download(query, context, url):
             os.remove(downloaded_file)
             return
 
-        await status_msg.edit_text("⬆️ جاري إرسال الملف...")
+        await status_msg.edit_text("⬆️ جاري إرسال المحتوى...")
 
-        # تحديد ما إذا كان الملف صورة أو فيديو وإرساله
-        if downloaded_file.endswith(('.jpg', '.png', '.jpeg', '.webp')):
+        # التمييز التلقائي بين الصور والفيديوهات وإرسالها
+        ext = os.path.splitext(downloaded_file)[1].lower()
+        if ext in ['.jpg', '.jpeg', '.png', '.webp']:
             with open(downloaded_file, 'rb') as photo:
                 await query.message.reply_photo(photo=photo)
         else:
             with open(downloaded_file, 'rb') as video:
                 await query.message.reply_video(video=video)
 
-        # نظف الملفات المحملة
+        # تنظيف الملفات المؤقتة بعد الإرسال
         os.remove(downloaded_file)
         await status_msg.delete()
 
