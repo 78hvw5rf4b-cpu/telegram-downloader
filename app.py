@@ -11,6 +11,10 @@ from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
+# --- معرّف ورابط قناة التحديثات للاشتراك الإجباري ---
+CHANNEL_USERNAME = "@Abu_na9r"  # معرّف القناة
+CHANNEL_LINK = "https://t.me/Abu_na9r"
+
 # --- سيرفر Flask لإبقاء البوت متصلاً 24 ساعة ---
 app_web = Flask(__name__)
 
@@ -34,7 +38,7 @@ def self_ping():
                 requests.get("http://127.0.0.1:10000", timeout=10)
         except Exception:
             pass
-        time.sleep(300) # يرسل نبضة كل 5 دقائق
+        time.sleep(300)
 
 threading.Thread(target=run_web, daemon=True).start()
 threading.Thread(target=self_ping, daemon=True).start()
@@ -53,7 +57,24 @@ def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if user_id not in context.bot_data["all_users"]:
         context.bot_data["all_users"].add(user_id)
 
-CHANNEL_LINK = "https://t.me/Abu_na9r"
+# --- فحص الاشتراك الإجباري ---
+async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+    except Exception as e:
+        logging.error(f"Subscription Check Error: {e}")
+        # إذا حدث خطأ في التحقق (مثل عدم إضافة البوت كأدمن بالقناة)، يكمل لتجنب إيقاف العمل
+        return True
+    return False
+
+def get_sub_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("📢 اشترك في القناة أولاً", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data="check_subscription")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 def get_main_keyboard():
     keyboard = [
@@ -82,6 +103,15 @@ def get_action_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
+
+    if not await is_subscribed(context, user_id):
+        await update.message.reply_text(
+            "⚠️ **تنبيه:**\nيجب عليك الاشتراك في قناة البوت أولاً لاستخدام كافة الخدمات!",
+            reply_markup=get_sub_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
+
     await update.message.reply_text(
         "أهلاً بك في بوت Abu na9r! 🖐️\n\n"
         "• أرسل لي **رابط مقطع أو صورة** للتحميل المباشر.\n"
@@ -93,6 +123,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
+
+    if not await is_subscribed(context, user_id):
+        await update.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
+        return
+
     total_users = len(context.bot_data.get("all_users", set()))
     await update.message.reply_text(
         f"📊 **إحصائيات البوت الكلية:**\n\nعدد الأشخاص الذين دخلوا البوت: {total_users} مستخدم",
@@ -103,7 +138,11 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
-    
+
+    if not await is_subscribed(context, user_id):
+        await update.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
+        return
+
     prompt = " ".join(context.args)
     if not prompt:
         await update.message.reply_text("الرجاء كتابة سؤالك بعد الأمر، مثال:\n`/ai كيف أتعلم البرمجة؟`", parse_mode="Markdown")
@@ -168,6 +207,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     register_user(context, user_id)
 
+    if not await is_subscribed(context, user_id):
+        await update.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً لاستخدام البوت!", reply_markup=get_sub_keyboard())
+        return
+
     text = update.message.text.strip()
 
     if text.startswith("http://") or text.startswith("https://"):
@@ -186,6 +229,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await query.answer()
     user_id = query.from_user.id
     register_user(context, user_id)
+
+    if query.data == "check_subscription":
+        if await is_subscribed(context, user_id):
+            await query.message.reply_text("✅ شكراً لك! تم التأكد من اشتراكك بنجاح. يمكنك الآن استخدام البوت بحرية.", reply_markup=get_main_keyboard())
+        else:
+            await query.message.reply_text("❌ لم يتم العثور على اشتراكك بعد! يرجى الاشتراك ثم الضغط على الزر مرة أخرى.", reply_markup=get_sub_keyboard())
+        return
+
+    if not await is_subscribed(context, user_id):
+        await query.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
+        return
 
     if query.data == "cmd_start":
         await query.message.reply_text("أهلاً بك مجدداً! أرسل رابطاً للتحميل أو اسأل الذكاء الاصطناعي.", reply_markup=get_main_keyboard())
