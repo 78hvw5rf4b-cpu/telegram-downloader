@@ -3,6 +3,7 @@ import logging
 import asyncio
 import threading
 import glob
+import time
 import requests
 from flask import Flask
 import yt_dlp
@@ -10,34 +11,48 @@ from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# --- سيرفر Flask لضمان استمرار عمل Render ---
+# --- سيرفر Flask لإبقاء البوت متصلاً 24 ساعة ---
 app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
-    return "Bot is alive and running!"
+    return "Bot is alive and running 24/7!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     app_web.run(host="0.0.0.0", port=port)
 
+# نظام Ping تلقائي يمنع Render من إيقاف السيرفر
+def self_ping():
+    time.sleep(10)
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    while True:
+        try:
+            if render_url:
+                requests.get(render_url, timeout=10)
+            else:
+                requests.get("http://127.0.0.1:10000", timeout=10)
+        except Exception:
+            pass
+        time.sleep(300) # يرسل نبضة كل 5 دقائق
+
 threading.Thread(target=run_web, daemon=True).start()
+threading.Thread(target=self_ping, daemon=True).start()
 # ------------------------------------------------
 
 logging.basicConfig(level=logging.INFO)
 
-# --- إعداد الذكاء الاصطناعي (Gemini) ---
+# --- إعداد الذكاء الاصطناعي Gemini ---
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# --- نظام حفظ وإحصائيات عدد المستخدمين ---
+# --- إحصائيات المستخدمين ---
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
         context.bot_data["all_users"] = set()
     if user_id not in context.bot_data["all_users"]:
         context.bot_data["all_users"].add(user_id)
 
-# --- الأزرار والقوائم ---
 CHANNEL_LINK = "https://t.me/Abu_na9r"
 
 def get_main_keyboard():
@@ -63,14 +78,14 @@ def get_action_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# --- الأوامر المنسدلة الأساسية ---
+# --- الأوامر الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
     await update.message.reply_text(
         "أهلاً بك في بوت Abu na9r! 🖐️\n\n"
         "• أرسل لي **رابط مقطع أو صورة** للتحميل المباشر.\n"
-        "• أو اكتب سؤالك مباشرة أو استخدم الأمر `/ai` للإجابة بالذكاء الاصطناعي!",
+        "• أو اكتب سؤالك مباشرة أو عبر الأمر `/ai` للإجابة بالذكاء الاصطناعي!",
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
@@ -80,7 +95,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     register_user(context, user_id)
     total_users = len(context.bot_data.get("all_users", set()))
     await update.message.reply_text(
-        f"📊 **إحصائيات البوت الكلية:**\n\nعدد جميع الأشخاص الذين دخلوا البوت: {total_users} مستخدم",
+        f"📊 **إحصائيات البوت الكلية:**\n\nعدد الأشخاص الذين دخلوا البوت: {total_users} مستخدم",
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
@@ -96,13 +111,13 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     await ask_gemini(update, prompt)
 
-# --- دالة المحادثة مع الذكاء الاصطناعي ---
+# --- دالة استدعاء الذكاء الاصطناعي ---
 async def ask_gemini(update: Update, prompt: str):
     if not ai_client:
-        await update.message.reply_text("❌ لم يتم إضافة مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) في متغيرات البيئة بـ Render.")
+        await update.message.reply_text("❌ لم يتم إضافة GEMINI_API_KEY صحيح في متغيرات البيئة بـ Render.")
         return
 
-    msg = await update.message.reply_text("🧠 جاري التفكير والإجابة...")
+    msg = await update.message.reply_text("🧠 جاري التفكير...")
     try:
         response = await asyncio.to_thread(
             ai_client.models.generate_content,
@@ -112,9 +127,9 @@ async def ask_gemini(update: Update, prompt: str):
         await msg.edit_text(response.text)
     except Exception as e:
         logging.error(f"AI Error: {e}")
-        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.")
+        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي. تأكد من صحة API Key.")
 
-# --- محرك خاص لتيك توك لتجاوز حظر السيرفرات ---
+# --- محركات التحميل ---
 def download_tiktok_api(url: str, output_path: str) -> bool:
     try:
         api_url = f"https://api.tiklydown.eu.org/api/download?url={url}"
@@ -133,7 +148,6 @@ def download_tiktok_api(url: str, output_path: str) -> bool:
         logging.error(f"TikTok Direct API Error: {e}")
     return False
 
-# --- محرك تحميل عام للمنصات الأخرى ---
 def download_media_general(url: str, output_prefix: str):
     ydl_opts = {
         'format': 'best',
@@ -149,14 +163,13 @@ def download_media_general(url: str, output_prefix: str):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
-# --- استقبال الرسائل ---
+# --- معالجة الرسائل ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
 
     text = update.message.text.strip()
 
-    # إذا كانت الرسالة رابطاً -> توجيه للتحميل
     if text.startswith("http://") or text.startswith("https://"):
         context.chat_data["pending_url"] = text
         await update.message.reply_text(
@@ -165,10 +178,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # إذا كانت الرسالة نصاً عادياً -> إرسالها للذكاء الاصطناعي مباشرةً
     await ask_gemini(update, text)
 
-# --- معالجة الضغط على الأزرار ---
+# --- معالجة الأزرار ---
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -180,7 +192,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     elif query.data == "cmd_stats":
         total_users = len(context.bot_data.get("all_users", set()))
-        await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد جميع الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
+        await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
 
     elif query.data == "action_download":
         url = context.chat_data.get("pending_url")
@@ -189,7 +201,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         await process_download(query, context, url)
 
-# --- معالجة وإرسال الصور والفيديوهات ---
+# --- التحميل والإرسال ---
 async def process_download(query, context, url):
     status_msg = await query.message.reply_text("⏳ جاري جلب وتحميل المحتوى، انتظر لحظة...")
     chat_id = query.message.chat_id
@@ -249,11 +261,9 @@ def main():
 
     application = Application.builder().token(token).build()
 
-    # تسجيل الأوامر لتعمل في قائمة التليجرام
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("ai", ai_command))
-    
     application.add_handler(CallbackQueryHandler(button_click))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
