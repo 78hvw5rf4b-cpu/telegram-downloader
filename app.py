@@ -7,7 +7,7 @@ import time
 import requests
 from flask import Flask
 import yt_dlp
-from google import genai
+import google.generativeai as genai
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, BotCommand
 
@@ -45,7 +45,8 @@ threading.Thread(target=self_ping, daemon=True).start()
 logging.basicConfig(level=logging.INFO)
 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
 
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
@@ -62,7 +63,7 @@ async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> boo
         return True
     return False
 
-# --- كيبورد ثابت أسفل الشاشة ---
+# كيبورد أزرار ثابت أسفل الشاشة
 def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton("🤖 الذكاء الاصطناعي"), KeyboardButton("📥 تحميل فيديو / صورة")],
@@ -70,28 +71,25 @@ def get_bottom_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# --- تسجيل أوامر قائمة "القائمة ☰" في تليجرام ---
+# تسجيل القائمة السفلية (زر القائمة ☰)
 async def post_init(application: Application):
     commands = [
-        BotCommand("start", "بدء استخدام البوت / القائمة الرئيسية"),
+        BotCommand("start", "بدء تشغيل البوت / القائمة"),
         BotCommand("ai", "سؤال الذكاء الاصطناعي"),
         BotCommand("stats", "إحصائيات البوت"),
     ]
     await application.bot.set_my_commands(commands)
 
-# --- الأوامر الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
 
     if not await is_subscribed(context, user_id):
-        await update.message.reply_text(
-            f"⚠️ **تنبيه:**\nيجب عليك الاشتراك في القناة أولاً لاستخدام البوت:\n{CHANNEL_LINK}"
-        )
+        await update.message.reply_text(f"⚠️ يجب عليك الاشتراك في القناة أولاً:\n{CHANNEL_LINK}")
         return
 
     await update.message.reply_text(
-        "أهلاً بك في بوت Abu na9r! 🖐️\nاختر من الأزرار بالأسفل أو أرسل رابطاً مباشراً للتحميل:",
+        "أهلاً بك! 🖐️\nاختر من الأزرار بالأسفل أو أرسل رابطاً مباشراً للتحميل:",
         reply_markup=get_bottom_keyboard()
     )
 
@@ -108,15 +106,14 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await ask_gemini(update, prompt)
     else:
         context.user_data["state"] = "waiting_for_ai_prompt"
-        await update.message.reply_text("🤖 **قسم الذكاء الاصطناعي:**\nاكتب سؤالك الآن وسأرد عليك فوراً.", reply_markup=get_bottom_keyboard())
+        await update.message.reply_text("🤖 اكتب سؤالك للذكاء الاصطناعي الآن وسأجيبك فوراً.")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
     total_users = len(context.bot_data.get("all_users", set()))
-    await update.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد المستخدمين: {total_users}", reply_markup=get_bottom_keyboard())
+    await update.message.reply_text(f"📊 عدد مستخدمي البوت: {total_users}")
 
-# --- معالجة النصوص وضغطات أزرار الكيبورد ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
@@ -127,14 +124,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text.strip()
 
-    # التفاعل مع أزرار الكيبورد السفلي
+    # أزرار الكيبورد الثابت بالأسفل
     if text == "🤖 الذكاء الاصطناعي":
         context.user_data["state"] = "waiting_for_ai_prompt"
         await update.message.reply_text("🤖 أرسل سؤالك أو استفسارك الآن:")
         return
 
     elif text == "📥 تحميل فيديو / صورة":
-        await update.message.reply_text("📥 أرسل رابط المقطع أو الصورة (تيك توك، إنستغرام، يوتيوب...) مباشرة.")
+        await update.message.reply_text("📥 أرسل رابط المقطع أو الصورة مباشرة.")
         return
 
     elif text == "📊 الإحصائيات":
@@ -142,42 +139,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     elif text == "📢 قناة التحديثات":
-        await update.message.reply_text(f"📢 رابط قناة التحديثات:\n{CHANNEL_LINK}")
+        await update.message.reply_text(f"📢 رابط القناة:\n{CHANNEL_LINK}")
         return
 
-    # إذا أرسل رابطاً
+    # رابط التحميل
     if text.startswith("http://") or text.startswith("https://"):
         await process_download(update.message, context, text)
         return
 
-    # إذا كان ينتظر إجابة الذكاء الاصطناعي
+    # سؤال الذكاء الاصطناعي
     if context.user_data.get("state") == "waiting_for_ai_prompt":
         context.user_data["state"] = None
         await ask_gemini(update, text)
         return
 
-    # إجابة عامة بدون إعادة إرسال القائمة
-    await update.message.reply_text("أرسل رابطاً للتحميل، أو اختر خدمة من الكيبورد الأسفل.")
+    await update.message.reply_text("أرسل رابطاً للتحميل، أو اختر من الأزرار بالأسفل.")
 
-# --- الذكاء الاصطناعي ---
 async def ask_gemini(update: Update, prompt: str):
-    if not ai_client:
-        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير متوفر بـ Render.")
+    if not os.environ.get("GEMINI_API_KEY"):
+        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير مضاف في Render.")
         return
 
     msg = await update.message.reply_text("🧠 جاري التفكير...")
     try:
-        response = await asyncio.to_thread(
-            ai_client.models.generate_content,
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = await asyncio.to_thread(model.generate_content, prompt)
         await msg.edit_text(response.text)
     except Exception as e:
         logging.error(f"AI Error: {e}")
-        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي. تأكد من مفتاح API بـ Render.")
+        await msg.edit_text("❌ حدث خطأ في الاتصال، تأكد من صحة مفتاح GEMINI_API_KEY في Render.")
 
-# --- محركات التحميل ---
 def download_tiktok_api(url: str, output_path: str) -> bool:
     try:
         api_url = f"https://api.tiklydown.eu.org/api/download?url={url}"
@@ -212,7 +203,7 @@ def download_media_general(url: str, output_prefix: str):
         ydl.download([url])
 
 async def process_download(message_obj, context, url):
-    status_msg = await message_obj.reply_text("⏳ جاري جلب وتحميل المحتوى...")
+    status_msg = await message_obj.reply_text("⏳ جاري التحميل...")
     chat_id = message_obj.chat_id
     output_prefix = f"media_{chat_id}"
     downloaded_file = None
@@ -231,12 +222,12 @@ async def process_download(message_obj, context, url):
                 downloaded_file = files[0]
 
         if not downloaded_file or not os.path.exists(downloaded_file):
-            await status_msg.edit_text("❌ تعذر تحميل المحتوى، تأكد من الرابط.")
+            await status_msg.edit_text("❌ تعذر تحميل المحتوى.")
             return
 
         file_size = os.path.getsize(downloaded_file) / (1024 * 1024)
         if file_size > 50:
-            await status_msg.edit_text("❌ حجم الملف كبير جداً (يتجاوز 50 ميجابايت).")
+            await status_msg.edit_text("❌ حجم الملف كبير جداً.")
             os.remove(downloaded_file)
             return
 
