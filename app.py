@@ -7,7 +7,6 @@ import time
 import requests
 from flask import Flask
 import yt_dlp
-from g4f.client import Client
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -43,7 +42,6 @@ threading.Thread(target=self_ping, daemon=True).start()
 # ----------------------------------------
 
 logging.basicConfig(level=logging.INFO)
-ai_client = Client()
 
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
@@ -60,14 +58,12 @@ async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> boo
         return True
     return False
 
-# كيبورد ثابت يحتوي على التحميل والقناة فقط
 def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton("📥 تحميل فيديو / صورة"), KeyboardButton("📢 قناة التحديثات")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# قائمة زر (القائمة ☰) السفلية
 async def post_init(application: Application):
     commands = [
         BotCommand("start", "البدء / القائمة الرئيسية"),
@@ -99,7 +95,7 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if context.args:
         prompt = " ".join(context.args)
-        await ask_free_ai(update, prompt)
+        await ask_gemini_direct(update, prompt)
     else:
         context.user_data["state"] = "waiting_for_ai_prompt"
         await update.message.reply_text("🤖 اكتب سؤالك للذكاء الاصطناعي الآن وسأجيبك فوراً.")
@@ -134,25 +130,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if context.user_data.get("state") == "waiting_for_ai_prompt":
         context.user_data["state"] = None
-        await ask_free_ai(update, text)
+        await ask_gemini_direct(update, text)
         return
 
     await update.message.reply_text("أرسل رابطاً للتحميل، أو اكتب /ai وسؤالك للذكاء الاصطناعي.")
 
-# ذكاء اصطناعي مجاني وبدون مفاتيح API
-async def ask_free_ai(update: Update, prompt: str):
+def call_gemini_api(prompt: str, api_key: str) -> str:
+    models = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=20)
+            if res.status_code == 200:
+                data = res.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            logging.error(f"Gemini API Error with {model}: {e}")
+    return None
+
+async def ask_gemini_direct(update: Update, prompt: str):
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير مضاف في متغيرات Render.")
+        return
+
     msg = await update.message.reply_text("🧠 جاري التفكير...")
-    try:
-        response = await asyncio.to_thread(
-            ai_client.chat.completions.create,
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        answer = response.choices[0].message.content
+    answer = await asyncio.to_thread(call_gemini_api, prompt, key)
+
+    if answer:
         await msg.edit_text(answer)
-    except Exception as e:
-        logging.error(f"AI Error: {e}")
-        await msg.edit_text("❌ متعذر الاتصال بالذكاء الاصطناعي حالياً، حاول مجدداً بعد لحظات.")
+    else:
+        await msg.edit_text("❌ حدث خطأ في الاتصال بالذكاء الاصطناعي. تأكد من صحة مفتاح GEMINI_API_KEY.")
 
 def download_tiktok_api(url: str, output_path: str) -> bool:
     try:
