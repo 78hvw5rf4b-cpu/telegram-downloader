@@ -1,5 +1,5 @@
 python-telegram-bot
 yt-dlp
-flask
 requests
-google-genai
+flask
+google-generativeai
