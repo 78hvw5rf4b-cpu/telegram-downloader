@@ -7,7 +7,7 @@ import time
 import requests
 from flask import Flask
 import yt_dlp
-import google.generativeai as genai
+from g4f.client import Client
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -43,10 +43,7 @@ threading.Thread(target=self_ping, daemon=True).start()
 # ----------------------------------------
 
 logging.basicConfig(level=logging.INFO)
-
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
+ai_client = Client()
 
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
@@ -63,7 +60,7 @@ async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> boo
         return True
     return False
 
-# كيبورد ثابت يحتوي على التحميل وقناة التحديثات فقط بناءً على طلبك
+# كيبورد ثابت يحتوي على التحميل والقناة فقط
 def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton("📥 تحميل فيديو / صورة"), KeyboardButton("📢 قناة التحديثات")]
@@ -102,7 +99,7 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if context.args:
         prompt = " ".join(context.args)
-        await ask_gemini(update, prompt)
+        await ask_free_ai(update, prompt)
     else:
         context.user_data["state"] = "waiting_for_ai_prompt"
         await update.message.reply_text("🤖 اكتب سؤالك للذكاء الاصطناعي الآن وسأجيبك فوراً.")
@@ -123,55 +120,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text.strip()
 
-    # أزرار الكيبورد الثابتة (فقط التحميل والقناة)
     if text == "📥 تحميل فيديو / صورة":
-        await update.message.reply_text("📥 أرسل رابط المقطع أو الصورة مباشرة (تيك توك، انستقرام، إلخ).")
+        await update.message.reply_text("📥 أرسل رابط المقطع أو الصورة مباشرة.")
         return
 
     elif text == "📢 قناة التحديثات":
         await update.message.reply_text(f"📢 رابط القناة الرسمية:\n{CHANNEL_LINK}")
         return
 
-    # رابط التحميل المباشر
     if text.startswith("http://") or text.startswith("https://"):
         await process_download(update.message, context, text)
         return
 
-    # سؤال الذكاء الاصطناعي عند تفعيل حالة /ai
     if context.user_data.get("state") == "waiting_for_ai_prompt":
         context.user_data["state"] = None
-        await ask_gemini(update, text)
+        await ask_free_ai(update, text)
         return
 
-    await update.message.reply_text("أرسل رابطاً للتحميل، أو اكتب /ai وسؤالك لاستخدام الذكاء الاصطناعي.")
+    await update.message.reply_text("أرسل رابطاً للتحميل، أو اكتب /ai وسؤالك للذكاء الاصطناعي.")
 
-async def ask_gemini(update: Update, prompt: str):
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
-        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير مضاف في Render.")
-        return
-
+# ذكاء اصطناعي مجاني وبدون مفاتيح API
+async def ask_free_ai(update: Update, prompt: str):
     msg = await update.message.reply_text("🧠 جاري التفكير...")
-    
-    # تجربة الموديلات المتاحة تلقائياً لتفادي الخطأ
-    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
-    response_text = None
-    
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            res = await asyncio.to_thread(model.generate_content, prompt)
-            if res and res.text:
-                response_text = res.text
-                break
-        except Exception as e:
-            logging.error(f"Error with {model_name}: {e}")
-            continue
-
-    if response_text:
-        await msg.edit_text(response_text)
-    else:
-        await msg.edit_text("❌ حدث خطأ في الاتصال بالذكاء الاصطناعي. تحقق من صحة مفتاح GEMINI_API_KEY داخل Render.")
+    try:
+        response = await asyncio.to_thread(
+            ai_client.chat.completions.create,
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        answer = response.choices[0].message.content
+        await msg.edit_text(answer)
+    except Exception as e:
+        logging.error(f"AI Error: {e}")
+        await msg.edit_text("❌ متعذر الاتصال بالذكاء الاصطناعي حالياً، حاول مجدداً بعد لحظات.")
 
 def download_tiktok_api(url: str, output_path: str) -> bool:
     try:
@@ -231,7 +212,7 @@ async def process_download(message_obj, context, url):
 
         file_size = os.path.getsize(downloaded_file) / (1024 * 1024)
         if file_size > 50:
-            await status_msg.edit_text("❌ حجم الملف كبير جداً (أكبر من 50 ميجابايت).")
+            await status_msg.edit_text("❌ حجم الملف كبير جداً.")
             os.remove(downloaded_file)
             return
 
