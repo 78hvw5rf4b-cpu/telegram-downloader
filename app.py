@@ -7,7 +7,7 @@ import time
 import requests
 from flask import Flask
 import yt_dlp
-from google import genai
+import google.generativeai as genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -44,8 +44,10 @@ threading.Thread(target=self_ping, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
+# --- إعداد مكتبة Gemini ---
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
 
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
@@ -100,7 +102,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=get_main_keyboard()
     )
 
-# --- معالجة الرسائل العادية (روابط أو نصوص) ---
+# --- معالجة الرسائل ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
@@ -111,19 +113,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text.strip()
 
-    # إذا أرسل رابطاً
     if text.startswith("http://") or text.startswith("https://"):
         context.chat_data["pending_url"] = text
         await process_download(update.message, context, text)
         return
 
-    # إذا كان المستخدم في وضع الذكاء الاصطناعي
     if context.user_data.get("state") == "waiting_for_ai_prompt":
         context.user_data["state"] = None
         await ask_gemini(update, text)
         return
 
-    # في حال كتابة نص عالي بدون اختيار خدمة
     await update.message.reply_text(
         "قم باختيار الخدمة من القائمة الرئيسية أو أرسل رابطاً مباشرة للتحميل:",
         reply_markup=get_main_keyboard()
@@ -131,21 +130,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # --- الذكاء الاصطناعي ---
 async def ask_gemini(update: Update, prompt: str):
-    if not ai_client:
-        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير متوفر حالياً.", reply_markup=get_main_keyboard())
+    if not GEMINI_KEY:
+        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير متوفر بـ Render.", reply_markup=get_main_keyboard())
         return
 
     msg = await update.message.reply_text("🧠 جاري التفكير...")
     try:
-        response = await asyncio.to_thread(
-            ai_client.models.generate_content,
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = await asyncio.to_thread(model.generate_content, prompt)
         await msg.edit_text(response.text, reply_markup=get_main_keyboard())
     except Exception as e:
         logging.error(f"AI Error: {e}")
-        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.", reply_markup=get_main_keyboard())
+        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي. تأكد من صحة GEMINI_API_KEY في Render.", reply_markup=get_main_keyboard())
 
 # --- معالجة الضغط على الأزرار ---
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -170,7 +166,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await query.message.reply_text("🤖 **قسم الذكاء الاصطناعي:**\nأرسل سؤالك أو استفسارك الآن للرد عليه.")
 
     elif query.data == "mode_download":
-        await query.message.reply_text("📥 **قسم التحميل:**\nقم بإرسال رابط المقطع أو الصورة من (تيك توك، إنستغرام، يوتيوب...) مباشرة.")
+        await query.message.reply_text("📥 **قسم التحميل:**\nقم بإرسال رابط المقطع أو الصورة مباشرة.")
 
     elif query.data == "cmd_stats":
         total_users = len(context.bot_data.get("all_users", set()))
@@ -270,6 +266,8 @@ def main():
     application = Application.builder().token(token).build()
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("stats", start))
+    application.add_handler(CommandHandler("ai", start))
     application.add_handler(CallbackQueryHandler(button_click))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
