@@ -11,22 +11,20 @@ from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# --- معرّف ورابط قناة التحديثات للاشتراك الإجباري ---
-CHANNEL_USERNAME = "@Abu_na9r"  # معرّف القناة
+CHANNEL_USERNAME = "@Abu_na9r"
 CHANNEL_LINK = "https://t.me/Abu_na9r"
 
-# --- سيرفر Flask لإبقاء البوت متصلاً 24 ساعة ---
+# --- سيرفر Flask لضمان التشغيل 24/7 ---
 app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
-    return "Bot is alive and running 24/7!"
+    return "Bot is alive 24/7!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     app_web.run(host="0.0.0.0", port=port)
 
-# نظام Ping تلقائي يمنع Render من إيقاف السيرفر
 def self_ping():
     time.sleep(10)
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
@@ -42,22 +40,18 @@ def self_ping():
 
 threading.Thread(target=run_web, daemon=True).start()
 threading.Thread(target=self_ping, daemon=True).start()
-# ------------------------------------------------
+# ----------------------------------------
 
 logging.basicConfig(level=logging.INFO)
 
-# --- إعداد الذكاء الاصطناعي Gemini ---
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# --- إحصائيات المستخدمين ---
 def register_user(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if "all_users" not in context.bot_data:
         context.bot_data["all_users"] = set()
-    if user_id not in context.bot_data["all_users"]:
-        context.bot_data["all_users"].add(user_id)
+    context.bot_data["all_users"].add(user_id)
 
-# --- فحص الاشتراك الإجباري ---
 async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     try:
         member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
@@ -65,7 +59,6 @@ async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> boo
             return True
     except Exception as e:
         logging.error(f"Subscription Check Error: {e}")
-        # إذا حدث خطأ في التحقق (مثل عدم إضافة البوت كأدمن بالقناة)، يكمل لتجنب إيقاف العمل
         return True
     return False
 
@@ -79,48 +72,36 @@ def get_sub_keyboard():
 def get_main_keyboard():
     keyboard = [
         [
-            InlineKeyboardButton("🚀 البدء / Start", callback_data="cmd_start"),
-            InlineKeyboardButton("📊 الإحصائيات", callback_data="cmd_stats")
+            InlineKeyboardButton("📥 تحميل فيديو / صورة", callback_data="mode_download"),
+            InlineKeyboardButton("🤖 الذكاء الاصطناعي", callback_data="mode_ai")
         ],
         [
-            InlineKeyboardButton("📢 قناة التحديثات وكل شي جديد 🎁", url=CHANNEL_LINK)
+            InlineKeyboardButton("📊 الإحصائيات", callback_data="cmd_stats"),
+            InlineKeyboardButton("📢 قناة التحديثات 🎁", url=CHANNEL_LINK)
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_action_keyboard():
-    keyboard = [
-        [
-            InlineKeyboardButton("📥 تحميل المحتوى", callback_data="action_download")
-        ],
-        [
-            InlineKeyboardButton("📢 قناة التحديثات وكل شي جديد 🎁", url=CHANNEL_LINK)
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-# --- الأوامر الأساسية ---
+# --- الأوامر الرئيسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
 
     if not await is_subscribed(context, user_id):
         await update.message.reply_text(
-            "⚠️ **تنبيه:**\nيجب عليك الاشتراك في قناة البوت أولاً لاستخدام كافة الخدمات!",
+            "⚠️ **تنبيه:**\nيجب عليك الاشتراك في قناة البوت أولاً لاستخدام الخدمات!",
             reply_markup=get_sub_keyboard(),
             parse_mode="Markdown"
         )
         return
 
     await update.message.reply_text(
-        "أهلاً بك في بوت Abu na9r! 🖐️\n\n"
-        "• أرسل لي **رابط مقطع أو صورة** للتحميل المباشر.\n"
-        "• أو اكتب سؤالك مباشرة أو عبر الأمر `/ai` للإجابة بالذكاء الاصطناعي!",
-        reply_markup=get_main_keyboard(),
-        parse_mode="Markdown"
+        "أهلاً بك في بوت Abu na9r! 🖐️\nاختر الخدمة التي تريدها من الأزرار أدناه:",
+        reply_markup=get_main_keyboard()
     )
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# --- معالجة الرسائل العادية (روابط أو نصوص) ---
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
 
@@ -128,32 +109,30 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
         return
 
-    total_users = len(context.bot_data.get("all_users", set()))
+    text = update.message.text.strip()
+
+    # إذا أرسل رابطاً
+    if text.startswith("http://") or text.startswith("https://"):
+        context.chat_data["pending_url"] = text
+        await process_download(update.message, context, text)
+        return
+
+    # إذا كان المستخدم في وضع الذكاء الاصطناعي
+    if context.user_data.get("state") == "waiting_for_ai_prompt":
+        context.user_data["state"] = None
+        await ask_gemini(update, text)
+        return
+
+    # في حال كتابة نص عالي بدون اختيار خدمة
     await update.message.reply_text(
-        f"📊 **إحصائيات البوت الكلية:**\n\nعدد الأشخاص الذين دخلوا البوت: {total_users} مستخدم",
-        reply_markup=get_main_keyboard(),
-        parse_mode="Markdown"
+        "قم باختيار الخدمة من القائمة الرئيسية أو أرسل رابطاً مباشرة للتحميل:",
+        reply_markup=get_main_keyboard()
     )
 
-async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    register_user(context, user_id)
-
-    if not await is_subscribed(context, user_id):
-        await update.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
-        return
-
-    prompt = " ".join(context.args)
-    if not prompt:
-        await update.message.reply_text("الرجاء كتابة سؤالك بعد الأمر، مثال:\n`/ai كيف أتعلم البرمجة؟`", parse_mode="Markdown")
-        return
-
-    await ask_gemini(update, prompt)
-
-# --- دالة استدعاء الذكاء الاصطناعي ---
+# --- الذكاء الاصطناعي ---
 async def ask_gemini(update: Update, prompt: str):
     if not ai_client:
-        await update.message.reply_text("❌ لم يتم إضافة GEMINI_API_KEY صحيح في متغيرات البيئة بـ Render.")
+        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير متوفر حالياً.", reply_markup=get_main_keyboard())
         return
 
     msg = await update.message.reply_text("🧠 جاري التفكير...")
@@ -163,10 +142,39 @@ async def ask_gemini(update: Update, prompt: str):
             model='gemini-2.5-flash',
             contents=prompt
         )
-        await msg.edit_text(response.text)
+        await msg.edit_text(response.text, reply_markup=get_main_keyboard())
     except Exception as e:
         logging.error(f"AI Error: {e}")
-        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي. تأكد من صحة API Key.")
+        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.", reply_markup=get_main_keyboard())
+
+# --- معالجة الضغط على الأزرار ---
+async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    register_user(context, user_id)
+
+    if query.data == "check_subscription":
+        if await is_subscribed(context, user_id):
+            await query.message.reply_text("✅ تم التأكد من اشتراكك بنجاح!", reply_markup=get_main_keyboard())
+        else:
+            await query.message.reply_text("❌ لم يتم العثور على اشتراكك بعد!", reply_markup=get_sub_keyboard())
+        return
+
+    if not await is_subscribed(context, user_id):
+        await query.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
+        return
+
+    if query.data == "mode_ai":
+        context.user_data["state"] = "waiting_for_ai_prompt"
+        await query.message.reply_text("🤖 **قسم الذكاء الاصطناعي:**\nأرسل سؤالك أو استفسارك الآن للرد عليه.")
+
+    elif query.data == "mode_download":
+        await query.message.reply_text("📥 **قسم التحميل:**\nقم بإرسال رابط المقطع أو الصورة من (تيك توك، إنستغرام، يوتيوب...) مباشرة.")
+
+    elif query.data == "cmd_stats":
+        total_users = len(context.bot_data.get("all_users", set()))
+        await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد المستخدمين: {total_users}", reply_markup=get_main_keyboard())
 
 # --- محركات التحميل ---
 def download_tiktok_api(url: str, output_path: str) -> bool:
@@ -202,63 +210,9 @@ def download_media_general(url: str, output_prefix: str):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
-# --- معالجة الرسائل ---
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    register_user(context, user_id)
-
-    if not await is_subscribed(context, user_id):
-        await update.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً لاستخدام البوت!", reply_markup=get_sub_keyboard())
-        return
-
-    text = update.message.text.strip()
-
-    if text.startswith("http://") or text.startswith("https://"):
-        context.chat_data["pending_url"] = text
-        await update.message.reply_text(
-            "✨ تم استلام الرابط بنجاح! اضغط على زر التحميل أدناه:",
-            reply_markup=get_action_keyboard()
-        )
-        return
-
-    await ask_gemini(update, text)
-
-# --- معالجة الأزرار ---
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    register_user(context, user_id)
-
-    if query.data == "check_subscription":
-        if await is_subscribed(context, user_id):
-            await query.message.reply_text("✅ شكراً لك! تم التأكد من اشتراكك بنجاح. يمكنك الآن استخدام البوت بحرية.", reply_markup=get_main_keyboard())
-        else:
-            await query.message.reply_text("❌ لم يتم العثور على اشتراكك بعد! يرجى الاشتراك ثم الضغط على الزر مرة أخرى.", reply_markup=get_sub_keyboard())
-        return
-
-    if not await is_subscribed(context, user_id):
-        await query.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
-        return
-
-    if query.data == "cmd_start":
-        await query.message.reply_text("أهلاً بك مجدداً! أرسل رابطاً للتحميل أو اسأل الذكاء الاصطناعي.", reply_markup=get_main_keyboard())
-    
-    elif query.data == "cmd_stats":
-        total_users = len(context.bot_data.get("all_users", set()))
-        await query.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد الأشخاص الذين دخلوا البوت: {total_users} مستخدم", reply_markup=get_main_keyboard())
-
-    elif query.data == "action_download":
-        url = context.chat_data.get("pending_url")
-        if not url:
-            await query.message.reply_text("❌ لم يتم العثور على رابط. يرجى إرسال الرابط مجدداً.", reply_markup=get_main_keyboard())
-            return
-        await process_download(query, context, url)
-
-# --- التحميل والإرسال ---
-async def process_download(query, context, url):
-    status_msg = await query.message.reply_text("⏳ جاري جلب وتحميل المحتوى، انتظر لحظة...")
-    chat_id = query.message.chat_id
+async def process_download(message_obj, context, url):
+    status_msg = await message_obj.reply_text("⏳ جاري جلب وتحميل المحتوى...")
+    chat_id = message_obj.chat_id
     output_prefix = f"media_{chat_id}"
     downloaded_file = None
 
@@ -276,7 +230,7 @@ async def process_download(query, context, url):
                 downloaded_file = files[0]
 
         if not downloaded_file or not os.path.exists(downloaded_file):
-            await status_msg.edit_text("❌ تعذر تحميل المحتوى. تأكد من صحة الرابط أو أن الحساب ليس خاصاً.", reply_markup=get_main_keyboard())
+            await status_msg.edit_text("❌ تعذر تحميل المحتوى، تأكد من الرابط.", reply_markup=get_main_keyboard())
             return
 
         file_size = os.path.getsize(downloaded_file) / (1024 * 1024)
@@ -285,22 +239,22 @@ async def process_download(query, context, url):
             os.remove(downloaded_file)
             return
 
-        await status_msg.edit_text("⬆️ جاري إرسال المحتوى...")
+        await status_msg.edit_text("⬆️ جاري الإرسال...")
 
         ext = os.path.splitext(downloaded_file)[1].lower()
         if ext in ['.jpg', '.jpeg', '.png', '.webp']:
             with open(downloaded_file, 'rb') as photo:
-                await query.message.reply_photo(photo=photo)
+                await message_obj.reply_photo(photo=photo, reply_markup=get_main_keyboard())
         else:
             with open(downloaded_file, 'rb') as video:
-                await query.message.reply_video(video=video)
+                await message_obj.reply_video(video=video, reply_markup=get_main_keyboard())
 
         os.remove(downloaded_file)
         await status_msg.delete()
 
     except Exception as e:
         logging.error(f"Error handling media: {e}")
-        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل. حاول إرسال الرابط مرة أخرى.", reply_markup=get_main_keyboard())
+        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل.", reply_markup=get_main_keyboard())
         for f in glob.glob(f"{output_prefix}*"):
             try:
                 os.remove(f)
@@ -316,8 +270,6 @@ def main():
     application = Application.builder().token(token).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("ai", ai_command))
     application.add_handler(CallbackQueryHandler(button_click))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
