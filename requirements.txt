@@ -2,4 +2,5 @@ python-telegram-bot
 yt-dlp
 requests
 flask
-google-generativeai
+g4f
+curl_cffi
