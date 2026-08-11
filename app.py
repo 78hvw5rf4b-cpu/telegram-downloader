@@ -7,6 +7,7 @@ import time
 import requests
 from flask import Flask
 import yt_dlp
+import google.generativeai as genai
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -95,7 +96,7 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if context.args:
         prompt = " ".join(context.args)
-        await ask_gemini_direct(update, prompt)
+        await ask_gemini_official(update, prompt)
     else:
         context.user_data["state"] = "waiting_for_ai_prompt"
         await update.message.reply_text("🤖 اكتب سؤالك للذكاء الاصطناعي الآن وسأجيبك فوراً.")
@@ -130,54 +131,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if context.user_data.get("state") == "waiting_for_ai_prompt":
         context.user_data["state"] = None
-        await ask_gemini_direct(update, text)
+        await ask_gemini_official(update, text)
         return
 
     await update.message.reply_text("أرسل رابطاً للتحميل، أو اكتب /ai وسؤالك للذكاء الاصطناعي.")
 
-# معالجة النصوص الطويلة بشكل آمن
-def call_gemini_api(prompt: str, api_key: str) -> str:
-    models = ["gemini-1.5-flash", "gemini-1.5-pro"]
-    for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        headers = {"Content-Type": "application/json"}
-        
-        payload = {
-            "contents": [
-                {
-                    "parts": [{"text": prompt}]
-                }
-            ],
-            "generationConfig": {
-                "maxOutputTokens": 2048
-            }
-        }
-        
-        try:
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                data = res.json()
-                if "candidates" in data and len(data["candidates"]) > 0:
-                    parts = data["candidates"][0]["content"]["parts"]
-                    return "".join([part.get("text", "") for part in parts])
-            else:
-                logging.error(f"Gemini API Status Error ({res.status_code}): {res.text}")
-        except Exception as e:
-            logging.error(f"Gemini API Request Error with {model}: {e}")
-            
-    return None
+# الاستدعام المباشر للذكاء الاصطناعي عبر مكتبة جوجل الرسمية
+def call_gemini_official(prompt: str, api_key: str) -> str:
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        logging.error(f"Google Gemini Library Error: {e}")
+        return None
 
-async def ask_gemini_direct(update: Update, prompt: str):
+async def ask_gemini_official(update: Update, prompt: str):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير مضاف في متغيرات Render.")
         return
 
     msg = await update.message.reply_text("🧠 جاري التفكير...")
-    answer = await asyncio.to_thread(call_gemini_api, prompt, key)
+    answer = await asyncio.to_thread(call_gemini_official, prompt, key)
 
     if answer:
-        # إذا كان الرد أقوى من حد تليجرام للرسالة الموحدة (4096 حرف) نجزئه
         if len(answer) > 4000:
             chunks = [answer[i:i+4000] for i in range(0, len(answer), 4000)]
             await msg.edit_text(chunks[0])
@@ -186,7 +165,7 @@ async def ask_gemini_direct(update: Update, prompt: str):
         else:
             await msg.edit_text(answer)
     else:
-        await msg.edit_text("❌ حدث خطأ أثناء معالجة النص، يرجى المحاولة مرة أخرى أو تقصير النص قليلاً.")
+        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي، تأكد من صحة مفتاح GEMINI_API_KEY.")
 
 def download_tiktok_api(url: str, output_path: str) -> bool:
     try:
