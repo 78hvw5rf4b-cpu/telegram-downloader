@@ -8,8 +8,8 @@ import requests
 from flask import Flask
 import yt_dlp
 import google.generativeai as genai
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, BotCommand
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 CHANNEL_USERNAME = "@Abu_na9r"
 CHANNEL_LINK = "https://t.me/Abu_na9r"
@@ -63,7 +63,7 @@ async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> boo
         return True
     return False
 
-# كيبورد أزرار ثابت أسفل الشاشة
+# كيبورد ثابت أسفل الشاشة
 def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton("🤖 الذكاء الاصطناعي"), KeyboardButton("📥 تحميل فيديو / صورة")],
