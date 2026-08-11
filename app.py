@@ -44,7 +44,7 @@ threading.Thread(target=self_ping, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- إعداد مكتبة Gemini ---
+# --- إعداد مفتاح الذكاء الاصطناعي ---
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
@@ -102,7 +102,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=get_main_keyboard()
     )
 
-# --- معالجة الرسائل ---
+async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    register_user(context, user_id)
+
+    if not await is_subscribed(context, user_id):
+        await update.message.reply_text("⚠️ يجب عليك الاشتراك في القناة أولاً!", reply_markup=get_sub_keyboard())
+        return
+
+    # إذا أرسل المستخدم نص مع الأمر مثل: /ai كم عدد سكان الأرض
+    if context.args:
+        prompt = " ".join(context.args)
+        await ask_gemini(update, prompt)
+    else:
+        context.user_data["state"] = "waiting_for_ai_prompt"
+        await update.message.reply_text("🤖 **قسم الذكاء الاصطناعي:**\nأرسل سؤالك أو استفسارك الآن للرد عليه.")
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    register_user(context, user_id)
+    total_users = len(context.bot_data.get("all_users", set()))
+    await update.message.reply_text(f"📊 **إحصائيات البوت الكلية:**\n\nعدد المستخدمين: {total_users}", reply_markup=get_main_keyboard())
+
+# --- معالجة الرسائل النصية ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     register_user(context, user_id)
@@ -128,10 +150,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=get_main_keyboard()
     )
 
-# --- الذكاء الاصطناعي ---
+# --- محرك الذكاء الاصطناعي ---
 async def ask_gemini(update: Update, prompt: str):
-    if not GEMINI_KEY:
-        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير متوفر بـ Render.", reply_markup=get_main_keyboard())
+    if not os.environ.get("GEMINI_API_KEY"):
+        await update.message.reply_text("❌ مفتاح GEMINI_API_KEY غير مضاف في متغيرات Render.", reply_markup=get_main_keyboard())
         return
 
     msg = await update.message.reply_text("🧠 جاري التفكير...")
@@ -141,9 +163,9 @@ async def ask_gemini(update: Update, prompt: str):
         await msg.edit_text(response.text, reply_markup=get_main_keyboard())
     except Exception as e:
         logging.error(f"AI Error: {e}")
-        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي. تأكد من صحة GEMINI_API_KEY في Render.", reply_markup=get_main_keyboard())
+        await msg.edit_text("❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي. تأكد من صحة المفتاح في Render.", reply_markup=get_main_keyboard())
 
-# --- معالجة الضغط على الأزرار ---
+# --- معالجة الأزرار التفاعلية ---
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -266,8 +288,8 @@ def main():
     application = Application.builder().token(token).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stats", start))
-    application.add_handler(CommandHandler("ai", start))
+    application.add_handler(CommandHandler("ai", ai_command))
+    application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CallbackQueryHandler(button_click))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
