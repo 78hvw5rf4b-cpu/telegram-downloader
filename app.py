@@ -136,12 +136,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await update.message.reply_text("أرسل رابطاً للتحميل، أو اكتب /ai وسؤالك للذكاء الاصطناعي.")
 
-# الاتصال بالذكاء الاصطناعي باستخدام الموديلات المتاحة والمدعومة رسمياً
+# الاتصال بالذكاء الاصطناعي بالموديل المعتمد رسمياً
 def call_gemini_new(prompt: str, api_key: str):
     client = genai.Client(api_key=api_key)
-    # استخدام النماذج المدعومة حالياً فقط
-    models_to_try = ['gemini-2.0-flash', 'gemini-2.0-flash-lite']
-    last_error = ""
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+        )
+        if response and response.text:
+            return response.text, None
+    except Exception as e:
+        return None, str(e)
+
+    return None, "لم يتم استلام رد من الذكاء الاصطناعي."
+
 
     for model_name in models_to_try:
         try:
